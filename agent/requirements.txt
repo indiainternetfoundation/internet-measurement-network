@@ -1,0 +1,7 @@
+nats-py[nkeys]
+typer
+netifaces
+structlog
+prometheus-client
+aiohttp
+configparser

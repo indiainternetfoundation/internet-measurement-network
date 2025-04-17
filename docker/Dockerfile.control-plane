@@ -1,0 +1,9 @@
+FROM python:3.12.9
+
+WORKDIR /control-plane
+
+COPY ./control-plane/requirements.txt /control-plane/requirements.txt
+
+RUN pip install --no-cache-dir --upgrade -r /control-plane/requirements.txt
+
+CMD ["fastapi", "run", "/control-plane/main.py", "--port", "80", "--worker", "3", "--reload"]

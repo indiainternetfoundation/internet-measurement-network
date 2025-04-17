@@ -1,0 +1,6 @@
+nats-py[nkeys]
+fastapi[standard]
+uvicorn
+structlog
+prometheus-client
+configparser

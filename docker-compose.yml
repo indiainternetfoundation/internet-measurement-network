@@ -1,0 +1,88 @@
+services:
+  nats:
+    image: 'nats:latest'
+    entrypoint: "/nats-server -DV -m 8222 "
+    hostname: nats-server
+    # expose:
+    #   - "4222"
+    ports:
+      - "8222:8222"
+      - "4222:4222"
+
+  nats-ui:
+    image: mdawar/nats-dashboard:latest
+    container_name: natsui
+    environment:
+      REVERSE_PROXY_UPSTREAM: 'http://nats:8222'
+    ports:
+      - "9222:80"
+    depends_on:
+      - nats
+    volumes:
+      - ./example/nats-dashboard/config.json:/srv/config.json
+  # nui:
+  #   image: ghcr.io/nats-nui/nui:edge
+  #   volumes:
+  #     - ./db:/db
+  #   ports:
+  #     - "31312:31311" 
+  #   depends_on:
+  #     - nats
+
+  api:
+    build:
+      dockerfile: "./docker/Dockerfile.control-plane"
+    container_name: api
+    volumes:
+      - ./control-plane:/control-plane
+    links:
+      - nats
+    environment:
+      - "NATS_URL=nats://nats:4222"
+    depends_on:
+      - nats
+    ports:
+      - "8080:80"
+
+  agent_1:
+    build:
+      dockerfile: "./docker/Dockerfile.agent"
+    container_name: agent_1
+    volumes:
+      - ./agent:/agent
+    links:
+      - nats
+    environment:
+      - NATS_URL=nats://nats:4222
+      - AGENT_NAME=aiori_1
+    depends_on:
+      - nats
+      - api
+    ports:
+      - "9101:9101"
+
+  prometheus:
+    image: prom/prometheus
+    container_name: prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+    ports:
+      - 9090:9090
+    restart: unless-stopped
+    volumes:
+      - ./example/prometheus:/etc/prometheus
+      - prom_data:/prometheus
+  grafana:
+    image: grafana/grafana
+    container_name: grafana
+    ports:
+      - 3000:3000
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - ./example/grafana:/etc/grafana/provisioning/datasources
+
+volumes:
+  prom_data:

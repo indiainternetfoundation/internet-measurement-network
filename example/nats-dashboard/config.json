@@ -1,0 +1,7 @@
+{
+    "server": {
+      "name": "My NATS Server",
+      "url": "https://9222-arnavdas88-internetmeas-5b1q9zem314.ws-us118.gitpod.io/proxy/"
+    },
+    "hideServerInput": false
+  }
