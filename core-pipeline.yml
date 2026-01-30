@@ -1,0 +1,142 @@
+version: '3.8'
+
+services:
+  nats:
+    image: nats:latest
+    command: "-n newton -DV -m 8222 -p 4222"
+    hostname: nats-server
+    ports:
+      - "8222:8222"  # Monitoring port
+      - "4222:4222"  # Client connection port
+    networks:
+      - aiori-net
+
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: imn_db
+      POSTGRES_USER: imn_user
+      POSTGRES_PASSWORD: imn_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - aiori-net
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    ports:
+      - "8123:8123"  # HTTP interface
+      - "9000:9000"  # Native interface
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    environment:
+      - CLICKHOUSE_DB=imn
+      - CLICKHOUSE_USER=admin
+      - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1
+    networks:
+      - aiori-net
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "localhost:8123/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  server1:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.server
+    container_name: server1
+    ports:
+      - "8001:8000"  # Different port mapping
+    depends_on:
+      - nats
+      - postgres
+      - clickhouse
+    networks:
+      - aiori-net
+    environment:
+      - NATS_URL=nats://nats-server:4222
+      - DBOS_SYSTEM_DATABASE_URL=postgresql://imn_user:imn_password@postgres:5432/imn_db
+      - CLICKHOUSE_HOST=clickhouse
+      - CLICKHOUSE_PORT=8123
+      - CLICKHOUSE_DATABASE=imn
+      - CLICKHOUSE_USERNAME=admin
+      - CLICKHOUSE_PASSWORD=
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  server2:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.server
+    container_name: server2
+    ports:
+      - "8002:8000"  # Different port mapping
+    depends_on:
+      - nats
+      - postgres
+      - clickhouse
+    networks:
+      - aiori-net
+    environment:
+      - NATS_URL=nats://nats-server:4222
+      - DBOS_SYSTEM_DATABASE_URL=postgresql://imn_user:imn_password@postgres:5432/imn_db
+      - CLICKHOUSE_HOST=clickhouse
+      - CLICKHOUSE_PORT=8123
+      - CLICKHOUSE_DATABASE=imn
+      - CLICKHOUSE_USERNAME=admin
+      - CLICKHOUSE_PASSWORD=
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  agent_1:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.agent
+    container_name: agent_1
+    volumes:
+      - ./:/app
+    environment:
+      - NATS_URL=nats://nats-server:4222
+      - AGENT_NAME=aiori_1
+    depends_on:
+      - nats
+      - server1
+      - server2
+    networks:
+      - aiori-net
+    working_dir: /app
+
+  agent_2:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.agent
+    container_name: agent_2
+    volumes:
+      - ./:/app
+    environment:
+      - NATS_URL=nats://nats-server:4222
+      - AGENT_NAME=aiori_2
+    depends_on:
+      - nats
+      - server1
+      - server2
+    networks:
+      - aiori-net
+    working_dir: /app
+
+volumes:
+  postgres_data:
+  clickhouse_data:
+
+networks:
+  aiori-net:
+    driver: bridge

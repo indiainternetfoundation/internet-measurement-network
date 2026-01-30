@@ -22,9 +22,14 @@ class NatsClient:
     ):
         self.name: str = name
         self.url: list[str] = url.split(";")
-        settings = NATSotelSettings(service_name="agent", servers=self.url)
+        otel_settings = NATSotelSettings(
+            service_name=self.name,
+            servers=self.url,
+            otlp_trace_endpoint=settings.otlp_trace_endpoint,
+            otlp_logs_endpoint=settings.otlp_logs_endpoint
+        )
         # logger = logging.getLogger('server')
-        self.nc: NATSotel = NATSotel(settings)
+        self.nc: NATSotel = NATSotel(otel_settings)
 
     async def __aenter__(self):
         await self.nc.connect(

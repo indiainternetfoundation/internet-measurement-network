@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field
 from typing import Dict, Any, Optional
 from datetime import datetime, timezone
+from enum import Enum
 
 
 class AgentHeartbeat(BaseModel):
@@ -17,3 +18,20 @@ class AgentInfo(BaseModel):
     config: Dict[str, Any] = Field(default_factory=dict)
     first_seen: datetime
     total_heartbeats: int
+
+
+class ModuleStateEnum(str, Enum):
+    STARTED = "started"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    ERROR = "error"
+    FAILED = "failed"
+
+
+class ModuleState(BaseModel):
+    agent_id: str
+    module_name: str
+    state: ModuleStateEnum
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    error_message: Optional[str] = None
+    details: Optional[Dict[str, Any]] = None

@@ -31,10 +31,11 @@ class HeartbeatModule(BaseWorker):
         self.tags = shared.get("tags", {})
 
     async def setup(self):
-        if not check_package_availability("netifaces"):
-            install_package("netifaces")
-            await asyncio.sleep(5)
-        return check_package_availability("netifaces")
+        # if not check_package_availability("netifaces"):
+        #     install_package("netifaces")
+        #     await asyncio.sleep(5)
+        # return check_package_availability("netifaces")
+        return True
 
     async def run(self):
         """
@@ -80,6 +81,7 @@ class HeartbeatModule(BaseWorker):
         )
 
     async def _send_heartbeat(self):
+        # Create a trace group for this module operation
         heartbeat = HeartbeatModel(
             module = self.name,
             timestamp = time.time(),

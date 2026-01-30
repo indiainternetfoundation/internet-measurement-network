@@ -14,6 +14,11 @@ class Settings(BaseSettings, cli_parse_args=True, cli_exit_on_error=False):
     message_log_dir: Path = Field(default=Path(".messages"))
     crash_state_file: Path = Field(default=Path(".errors/crash_state.json"))
     max_crash_retries: int = 3
+    
+    # OTel configuration
+    otlp_trace_endpoint: str = Field(default="otel-collector:4317", env="OTLP_TRACE_ENDPOINT")
+    otlp_logs_endpoint: str = Field(default="otel-collector:4317", env="OTLP_LOGS_ENDPOINT")
+    otlp_metrics_endpoint: str = Field(default="otel-collector:4317", env="OTLP_METRICS_ENDPOINT")
 
     # class Config:
     #     env_file = ".env"

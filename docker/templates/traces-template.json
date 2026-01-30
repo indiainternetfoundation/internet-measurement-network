@@ -1,0 +1,102 @@
+{
+  "index_patterns": ["otel-v1-apm-span-*"],
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 1
+    },
+    "mappings": {
+      "dynamic_templates": [
+        {
+          "resource_attributes_map": {
+            "path_match": "resource.attributes.*",
+            "mapping": {
+              "type": "keyword"
+            }
+          }
+        },
+        {
+          "span_attributes_map": {
+            "path_match": "span.attributes.*",
+            "mapping": {
+              "type": "keyword"
+            }
+          }
+        }
+      ],
+      "date_detection": false,
+      "properties": {
+        "traceId": {
+          "type": "keyword",
+          "ignore_above": 256
+        },
+        "spanId": {
+          "type": "keyword",
+          "ignore_above": 256
+        },
+        "parentSpanId": {
+          "type": "keyword",
+          "ignore_above": 256
+        },
+        "name": {
+          "type": "keyword",
+          "ignore_above": 1024
+        },
+        "kind": {
+          "type": "keyword",
+          "ignore_above": 128
+        },
+        "startTime": {
+          "type": "date_nanos"
+        },
+        "endTime": {
+          "type": "date_nanos"
+        },
+        "durationInNanos": {
+          "type": "long"
+        },
+        "serviceName": {
+          "type": "keyword"
+        },
+        "events": {
+          "type": "nested",
+          "properties": {
+            "time": {
+              "type": "date_nanos"
+            }
+          }
+        },
+        "links": {
+          "type": "nested"
+        },
+        "status": {
+          "properties": {
+            "code": {
+              "type": "integer"
+            },
+            "message": {
+              "type": "keyword"
+            }
+          }
+        },
+        "traceGroup": {
+          "type": "keyword",
+          "ignore_above": 1024
+        },
+        "traceGroupFields": {
+          "properties": {
+            "endTime": {
+              "type": "date_nanos"
+            },
+            "durationInNanos": {
+              "type": "long"
+            },
+            "statusCode": {
+              "type": "integer"
+            }
+          }
+        }
+      }
+    }
+  }
+}

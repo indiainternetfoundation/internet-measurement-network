@@ -61,4 +61,3 @@ class HeartbeatModel(BaseModel):
     module: str
     tags: Dict[str, Any]
     timestamp: float
-

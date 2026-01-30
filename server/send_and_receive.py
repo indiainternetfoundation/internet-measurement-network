@@ -15,7 +15,7 @@ async def sub_cb(msg):
     pass
 
 async def main():
-    url: list[str] = ["nats://192.168.19.169:4222"]
+    url: list[str] = ["nats://192.168.0.112:4222"]
 
     settings = NATSotelSettings(service_name="server", servers=url)
 

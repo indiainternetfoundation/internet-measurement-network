@@ -1,108 +1,111 @@
-# Opensearch Data Prepper
-# Main telemetry pipeline with unified source
-otel-telemetry-pipeline:
+# OpenSearch Data Prepper Pipeline Configuration
+# Data Prepper 2.12.0 - Corrected configuration
+
+# ============================================================================
+# Entry Point: OTLP receiver for traces
+# ============================================================================
+entry-pipeline:
   source:
-    otlp:
+    otel_trace_source:
       ssl: false
       port: 21891
-  route:
-    - logs: 'getEventType() == "LOG"'
-    - traces: 'getEventType() == "TRACE"'
-    - metrics: 'getEventType() == "METRIC"'
+  buffer:
+    bounded_blocking:
+      buffer_size: 1024
+      batch_size: 256
   sink:
     - pipeline:
-        name: "logs-pipeline"
-        routes:
-          - "logs"
+        name: "trace-pipeline"
     - pipeline:
-        name: "traces-pipeline"
-        routes:
-          - "traces"
-    - pipeline:
-        name: "metrics-pipeline"
-        routes:
-          - "metrics"
-
-# Logs pipeline
-logs-pipeline:
-  source:
-    pipeline:
-      name: "otel-telemetry-pipeline"
-  sink:
-    - opensearch:
-        hosts: ["https://opensearch:9200"]
-        username: admin
-        password: "!1Fon@123"
-        insecure: true
-        index_type: custom
-        index: ss4o_logs-%{yyyy.MM.dd}
-
-# Traces pipeline
-traces-pipeline:
-  source:
-    pipeline:
-      name: "otel-telemetry-pipeline"
-  processor:
-  sink:
-    - pipeline:
-        name: "traces-raw-pipeline"
+        name: "raw-pipeline"
     - pipeline:
         name: "service-map-pipeline"
 
-# Traces raw processing pipeline
-traces-raw-pipeline:
+# ============================================================================
+# Trace Pipeline: OpenSearch Trace Analytics format
+# ============================================================================
+trace-pipeline:
   source:
     pipeline:
-      name: "traces-pipeline"
+      name: "entry-pipeline"
   processor:
-    - delete_entries:
-        with_keys: ["resource", ]
-    - otel_trace_raw:
-    - otel_trace_group:
-        hosts: ["https://opensearch:9200"]
-        username: admin
-        password: "!1Fon@123"
-        insecure: true
+    - otel_traces:  # Updated from otel_trace_raw
   sink:
     - opensearch:
-        hosts: ["https://opensearch:9200"]
-        username: admin
-        password: "!1Fon@123"
+        hosts: ["http://opensearch:9200"]
         insecure: true
         index_type: trace-analytics-raw
-        # index: otel-v1-apm-span-%{yyyy.MM.dd}
 
-# Service map processing pipeline
+# ============================================================================
+# Raw Pipeline: Store raw span data
+# ============================================================================
+raw-pipeline:
+  source:
+    pipeline:
+      name: "entry-pipeline"
+  sink:
+    - opensearch:
+        hosts: ["http://opensearch:9200"]
+        insecure: true
+        index_type: custom
+        index: "otel-spans-%{yyyy.MM.dd}"
+
+# ============================================================================
+# Service Map Pipeline: Generate service relationships
+# ============================================================================
 service-map-pipeline:
   source:
     pipeline:
-      name: "traces-pipeline"
+      name: "entry-pipeline"
   processor:
-    - service_map_stateful:
+    - service_map:  # Updated from service_map_stateful
   sink:
     - opensearch:
-        hosts: ["https://opensearch:9200"]
-        username: admin
-        password: "!1Fon@123"
+        hosts: ["http://opensearch:9200"]
         insecure: true
         index_type: trace-analytics-service-map
 
-# Metrics pipeline
+# ============================================================================
+# Logs Pipeline: OTLP logs (CORRECTED - removed unauthenticated)
+# ============================================================================
+log-pipeline:
+  source:
+    otel_logs_source:
+      ssl: false
+      port: 21892
+      # NO unauthenticated parameter - it doesn't exist!
+  buffer:
+    bounded_blocking:
+      buffer_size: 512
+      batch_size: 256
+  sink:
+    - opensearch:
+        hosts: ["http://opensearch:9200"]
+        insecure: true
+        index_type: custom
+        index: "ss4o_logs-%{yyyy.MM.dd}"
+
+# ============================================================================
+# Metrics Pipeline: OTLP metrics (CORRECTED - removed unauthenticated)
+# ============================================================================
 metrics-pipeline:
   source:
-    pipeline:
-      name: "otel-telemetry-pipeline"
+    otel_metrics_source:
+      ssl: false
+      port: 21893
+      # NO unauthenticated parameter - it doesn't exist!
+  buffer:
+    bounded_blocking:
+      buffer_size: 512
+      batch_size: 256
   processor:
     - otel_metrics:
         calculate_histogram_buckets: true
         calculate_exponential_histogram_buckets: true
         exponential_histogram_max_allowed_scale: 10
-        flatten_attributes: false
   sink:
     - opensearch:
-        hosts: ["https://opensearch:9200"]
-        username: admin
-        password: "!1Fon@123"
+        hosts: ["http://opensearch:9200"]
         insecure: true
         index_type: custom
-        index: ss4o_metrics-otel-%{yyyy.MM.dd}
+        index: "ss4o_metrics-%{yyyy.MM.dd}"

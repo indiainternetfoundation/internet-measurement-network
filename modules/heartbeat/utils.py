@@ -65,7 +65,10 @@ def _safe_get_system_info(module) -> System:
 
 def _safe_get_network_info(module) -> Mapping[str, NetworkInterface]:
     """Safely collects network interface information."""
-    import netifaces
+    try:
+        import netifaces
+    except:
+        return {}
 
     interfaces_data = {}
     try:

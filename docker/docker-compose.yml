@@ -1,0 +1,141 @@
+services:
+  nats:
+    image: nats:latest
+    command: "-n newton -DV -m 8222 -p 4222"
+    hostname: nats-server
+    ports:
+      - "8222:8222"  # Monitoring port
+      - "4222:4222"  # Client connection port
+    networks:
+      - aiori-net
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.92.0
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./otlp/otel-collector-config.yaml:/etc/otel-collector-config.yaml
+    ports:
+      - "5081:5081"  # OTLP gRPC receiver
+      - "4317:4317"  # OTLP gRPC receiver (alternative)
+      - "4318:4318"  # OTLP HTTP receiver
+      - "8888:8888"  # Metrics endpoint
+    depends_on:
+      - nats
+      - data-prepper
+    networks:
+      - aiori-net
+
+  opensearch:
+    image: opensearchproject/opensearch:2.11.0
+    environment:
+      - cluster.name=opensearch-cluster
+      - node.name=opensearch-node
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+      - DISABLE_SECURITY_PLUGIN=true
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    ports:
+      - "9200:9200"
+      - "9600:9600"
+    networks:
+      - aiori-net
+
+  opensearch-dashboards:
+    image: opensearchproject/opensearch-dashboards:2.11.0
+    environment:
+      - OPENSEARCH_HOSTS=["http://opensearch:9200"]
+      - DISABLE_SECURITY_DASHBOARDS_PLUGIN=true
+    ports:
+      - "5601:5601"
+    depends_on:
+      - opensearch
+    networks:
+      - aiori-net
+
+  data-prepper:
+    image: opensearchproject/data-prepper:2.12.0
+    volumes:
+      - ./docker/pipelines.yaml:/usr/share/data-prepper/pipelines/pipelines.yaml
+      - ./docker/data-prepper-config.yaml:/usr/share/data-prepper/config/data-prepper-config.yaml
+    ports:
+      - "21891:21891"  # OTLP traces
+      - "21892:21892"  # OTLP logs
+      - "21893:21893"  # OTLP metrics
+      - "4900:4900"    # Health check
+    depends_on:
+      - opensearch
+    networks:
+      - aiori-net
+
+  server:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.server
+    container_name: server
+    ports:
+      - "8000:8000"  # Server API
+    depends_on:
+      - nats
+      - otel-collector
+    networks:
+      - aiori-net
+    environment:
+      - NATS_URL=nats://nats-server:4222
+      - OTLP_TRACE_ENDPOINT=otel-collector:4317
+      - OTLP_METRICS_ENDPOINT=otel-collector:4317
+      - OTLP_LOGS_ENDPOINT=otel-collector:4317
+
+  agent_1:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.agent
+    container_name: agent_1
+    volumes:
+      - ./:/app
+    environment:
+      - NATS_URL=nats://nats-server:4222
+      - AGENT_NAME=aiori_1
+      - OTLP_TRACE_ENDPOINT=otel-collector:4317
+      - OTLP_LOGS_ENDPOINT=otel-collector:4317
+    ports:
+      - "9101:9101"  # Agent metrics/API
+    depends_on:
+      - nats
+      - server
+      - otel-collector
+    networks:
+      - aiori-net
+    working_dir: /app
+
+  agent_2:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.agent
+    container_name: agent_2
+    volumes:
+      - ./:/app
+    environment:
+      - NATS_URL=nats://nats-server:4222
+      - AGENT_NAME=aiori_2
+      - OTLP_TRACE_ENDPOINT=otel-collector:4317
+      - OTLP_LOGS_ENDPOINT=otel-collector:4317
+    ports:
+      - "9102:9102"  # Changed port to avoid conflict
+    depends_on:
+      - nats
+      - server
+      - otel-collector
+    networks:
+      - aiori-net
+    working_dir: /app
+
+networks:
+  aiori-net:
+    driver: bridge
