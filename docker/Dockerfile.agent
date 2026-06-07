@@ -1,9 +1,7 @@
 FROM python:3.12.9
 
+COPY . /app
 WORKDIR /app
+RUN pip install --no-cache-dir --upgrade -e .
 
-COPY ./agent/requirements.txt /agent/requirements.txt
-
-RUN pip install --no-cache-dir --upgrade -r /agent/requirements.txt
-
-CMD ["python", "-m", "agent"]
+CMD ["python", "-m", "aiori_agent"]

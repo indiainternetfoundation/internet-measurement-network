@@ -57,6 +57,7 @@ services:
     container_name: agent_2
     volumes:
       - ./:/app
+    working_dir: /app
     environment:
       - NATS_URL=["nats://nats-server:4222"]
       - AGENT_NAME=aiori_2
@@ -66,7 +67,6 @@ services:
       - nats
     networks:
       - aiori-net
-    working_dir: /app
 
 networks:
   aiori-net:

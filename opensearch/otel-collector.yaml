@@ -1,0 +1,187 @@
+# OpenTelemetry Collector Configuration
+# Receives telemetry data via OTLP and routes to appropriate backends
+
+receivers:
+  # OTLP receiver accepts logs, traces, and metrics via OpenTelemetry Protocol
+  otlp:
+    protocols:
+      # gRPC endpoint - high-performance binary protocol preferred for production
+      grpc:
+        endpoint: 0.0.0.0:4317
+      # HTTP endpoint - easier debugging, browser compatibility, and REST-based clients
+      http:
+        endpoint: 0.0.0.0:4318
+        cors:
+          # Allow all origins for development - restrict in production
+          allowed_origins:
+            - "http://*"
+            - "https://*"
+
+  # Self-scrape: pulls the collector's own process and pipeline metrics
+  # from the Prometheus endpoint exposed on :8888 (see service.telemetry
+  # section below) so otelcol_* series land in Cortex. The base-stack
+  # alerts (OtelCollectorExportFailures, OtelCollectorHighMemory,
+  # OtelCollectorQueueNearCapacity, PrometheusTargetDown) depend on this.
+  prometheus/self:
+    config:
+      scrape_configs:
+        - job_name: otel-collector
+          scrape_interval: 15s
+          static_configs:
+            - targets: ["localhost:8888"]
+          relabel_configs:
+            - target_label: service.name
+              replacement: otel-collector
+
+  # Scrape envoy's /stats/prometheus so ingress-level HTTP RPS/latency is
+  # visible to Cortex. Envoy translates downstream gRPC failures (cart,
+  # payment, ad, product-catalog — driven by flagd feature flags) into
+  # HTTP 5xx at the customer-facing boundary, so a single scrape unlocks
+  # full RED visibility from the edge. The scrape is a no-op when the
+  # otel-demo compose file isn't enabled (no DNS → drop).
+  prometheus/envoy:
+    config:
+      scrape_configs:
+        - job_name: envoy-frontend-proxy
+          scrape_interval: 15s
+          metrics_path: /stats/prometheus
+          # Use relabel_configs to set service.name (dotted key that the
+          # prometheusremotewrite exporter will demote to service_name).
+          # Setting a bare `labels: {service_name: ...}` collides with the
+          # collector's resourcedetection/target_info enrichment — both
+          # get emitted and Cortex joins them with a semicolon.
+          static_configs:
+            - targets: ["frontend-proxy:10000"]
+          relabel_configs:
+            - target_label: service.name
+              replacement: frontend-proxy
+
+processors:
+  # Memory limiter prevents OOM by dropping data when memory usage is high
+  # Critical for stability under load
+  memory_limiter:
+    check_interval: 5s
+    limit_percentage: 80
+    spike_limit_percentage: 25
+
+  # Batch processor groups telemetry data for efficient transmission
+  # Reduces network overhead and improves throughput
+  batch:
+    # Send batch after 10 seconds even if not full
+    timeout: 10s
+    # Send batch when it reaches 1024 items
+    send_batch_size: 1024
+
+  # Resource detection adds environment context to telemetry
+  resourcedetection:
+    detectors: [env, system]
+
+  # Transform processor handles data transformations
+  transform:
+    error_mode: ignore
+    trace_statements:
+      - context: span
+        statements:
+          # could be removed when https://github.com/vercel/next.js/pull/64852 is fixed upstream
+          - replace_pattern(name, "\\?.*", "")
+          - replace_match(name, "GET /api/products/*", "GET /api/products/{productId}")
+          # Workaround for https://github.com/opensearch-project/data-prepper/issues/5616
+          # Flatten nested dotted attribute keys to prevent OpenSearch mapping conflicts
+          - set(attributes["db_system_name"], attributes["db.system.name"]) where attributes["db.system.name"] != nil
+          - delete_key(attributes, "db.system.name")
+          - set(attributes["code_function_name"], attributes["code.function.name"]) where attributes["code.function.name"] != nil
+          - delete_key(attributes, "code.function.name")
+          - set(attributes["user_agent_original"], attributes["user_agent.original"]) where attributes["user_agent.original"] != nil
+          - delete_key(attributes, "user_agent.original")
+          - set(attributes["upstream_cluster_name"], attributes["upstream_cluster.name"]) where attributes["upstream_cluster.name"] != nil
+          - delete_key(attributes, "upstream_cluster.name")
+          - set(attributes["error_type"], attributes["error.type"]) where attributes["error.type"] != nil
+          - delete_key(attributes, "error.type")
+          - set(attributes["app_ads_contextKeys"], attributes["app.ads.contextKeys"]) where attributes["app.ads.contextKeys"] != nil
+          - delete_key(attributes, "app.ads.contextKeys")
+          - set(attributes["rpc_system"], attributes["rpc.system"]) where attributes["rpc.system"] != nil
+          - delete_key(attributes, "rpc.system")
+          # Rename flat-string attributes that conflict with dotted-key object mappings
+          - set(attributes["user_agent_string"], attributes["user_agent"]) where attributes["user_agent"] != nil and not IsMap(attributes["user_agent"])
+          - delete_key(attributes, "user_agent") where attributes["user_agent_string"] != nil
+          - set(attributes["db_system"], attributes["db.system"]) where attributes["db.system"] != nil
+          - delete_key(attributes, "db.system")
+      - context: spanevent
+        statements:
+          # De-dot gRPC message.* event attributes to prevent mapping conflict with
+          # GenAI event attributes where "message" is a plain string value.
+          # Without this, flagd's message.type/message.id/message.uncompressed_size
+          # create an object mapping for events.attributes.message, which conflicts
+          # with GenAI spans that use events.attributes.message as a string.
+          - set(attributes["message_type"], attributes["message.type"]) where attributes["message.type"] != nil
+          - delete_key(attributes, "message.type")
+          - set(attributes["message_id"], attributes["message.id"]) where attributes["message.id"] != nil
+          - delete_key(attributes, "message.id")
+          - set(attributes["message_uncompressed_size"], attributes["message.uncompressed_size"]) where attributes["message.uncompressed_size"] != nil
+          - delete_key(attributes, "message.uncompressed_size")
+    log_statements:
+      - context: log
+        statements:
+          # Handle structured log bodies (maps/objects) that cause parse errors in OpenSearch
+          # Flatten nested structures first, then convert to key=value string format
+          - flatten(body) where IsMap(body)
+          - set(body, ToKeyValueString(body)) where IsMap(body)
+
+exporters:
+  # Debug exporter for troubleshooting - outputs to collector logs
+  debug:
+    verbosity: detailed
+
+  # OTLP exporter sends logs and traces to Data Prepper
+  otlp/opensearch:
+    endpoint: "data-prepper:21890"
+    tls:
+      insecure: true
+      insecure_skip_verify: true
+
+  # Prometheus remote-write exporter sends metrics to Cortex.
+  # resource_to_telemetry_conversion promotes OTel resource attributes
+  # (service.name, service.version, deployment.environment, …) onto every
+  # exported sample, so every metric lands in Cortex with a `service_name`
+  # label. Without this, only flagd carried service_name and every other
+  # service was only addressable via `job="opentelemetry-demo/<svc>"`.
+  prometheusremotewrite/cortex:
+    endpoint: "http://prometheus:9090/api/v1/push"
+    tls:
+      insecure: true
+    resource_to_telemetry_conversion:
+      enabled: true
+
+service:
+  # Pipelines define the flow: receivers -> processors -> exporters
+  pipelines:
+    # Traces pipeline: OTLP -> processing -> Data Prepper
+    traces:
+      receivers: [otlp]
+      processors: [resourcedetection, memory_limiter, transform, batch]
+      exporters: [otlp/opensearch, debug]
+
+    # Metrics pipeline: OTLP + self-scrape + envoy scrape -> processing -> Cortex
+    metrics:
+      receivers: [otlp, prometheus/self, prometheus/envoy]
+      processors: [resourcedetection, memory_limiter, batch]
+      exporters: [prometheusremotewrite/cortex, debug]
+
+    # Logs pipeline: OTLP -> processing -> Data Prepper
+    logs:
+      receivers: [otlp]
+      processors: [resourcedetection, memory_limiter, transform, batch]
+      exporters: [otlp/opensearch, debug]
+
+  # Telemetry configuration for collector self-monitoring
+  telemetry:
+    logs:
+      level: info
+    metrics:
+      # Expose collector metrics on port 8888
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8888

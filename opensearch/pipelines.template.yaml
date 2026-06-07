@@ -1,0 +1,148 @@
+# Data Prepper Pipeline Configuration
+# Processes and transforms logs, traces, and metrics before writing to OpenSearch
+
+# Main OTLP pipeline - receives all telemetry and routes by type
+otlp-pipeline:
+  delay: 10
+  source:
+    # OTLP source receives telemetry via OpenTelemetry Protocol
+    otlp:
+      # Listen on port 21890 for gRPC connections from OpenTelemetry Collector
+      port: 21890
+      # Disable SSL for development
+      ssl: false
+  # Route telemetry by signal type
+  route:
+    - logs: "getEventType() == \"LOG\""
+    - traces: "getEventType() == \"TRACE\""
+  # Send to appropriate sub-pipelines
+  sink:
+    - pipeline:
+        name: "otel-logs-pipeline"
+        routes:
+          - "logs"
+    - pipeline:
+        name: "otel-traces-pipeline"
+        routes:
+          - "traces"
+
+# Log processing pipeline
+# Receives logs from main pipeline and writes to OpenSearch
+otel-logs-pipeline:
+  workers: 5
+  delay: 10
+  source:
+    pipeline:
+      name: "otlp-pipeline"
+  buffer:
+    bounded_blocking:
+  processor:
+    - copy_values:
+        entries:
+          - from_key: "time"
+            to_key: "@timestamp"
+  # Write processed logs to OpenSearch
+  sink:
+    - opensearch:
+        hosts: ["OPENSEARCH_PROTOCOL://OPENSEARCH_HOST:OPENSEARCH_PORT"]
+        username: OPENSEARCH_USER
+        password: OPENSEARCH_PASSWORD
+        # Disable SSL verification for development
+        insecure: true
+        # Use log analytics index type for automatic index management
+        index_type: log-analytics-plain
+
+# Trace processing pipeline
+# Receives traces from main pipeline and distributes to raw and service map pipelines
+otel-traces-pipeline:
+  delay: 100
+  source:
+    pipeline:
+      name: "otlp-pipeline"
+  # Send traces to both raw storage and service map generation
+  sink:
+    - pipeline:
+        name: "traces-raw-pipeline"
+    - pipeline:
+        name: "service-map-pipeline"
+
+# Raw trace storage pipeline
+# Stores individual trace spans in OpenSearch
+traces-raw-pipeline:
+  source:
+    pipeline:
+      name: "otel-traces-pipeline"
+  processor:
+    # Process raw trace data for OpenSearch storage
+    - otel_traces:
+  sink:
+    - opensearch:
+        hosts: ["OPENSEARCH_PROTOCOL://OPENSEARCH_HOST:OPENSEARCH_PORT"]
+        username: OPENSEARCH_USER
+        password: OPENSEARCH_PASSWORD
+        insecure: true
+        # Use trace analytics index type for automatic index management
+        index_type: trace-analytics-plain-raw
+
+# Service map generation pipeline (APM)
+# Builds service dependency maps and RED metrics from trace relationships.
+# Splits into two sub-pipelines so we can strip high-cardinality `randomKey`
+# labels from the Cortex branch without polluting the service-map branch.
+service-map-pipeline:
+  delay: 100
+  source:
+    pipeline:
+      name: "otel-traces-pipeline"
+  processor:
+    # APM service map processor - generates topology, service details, and RED metrics
+    - otel_apm_service_map:
+        group_by_attributes: [telemetry.sdk.language]
+        window_duration: 10s
+  route:
+    - otel_apm_service_map_route: 'getEventType() == "SERVICE_MAP"'
+    - service_processed_metrics: 'getEventType() == "METRIC"'
+  sink:
+    - opensearch:
+        hosts: ["OPENSEARCH_PROTOCOL://OPENSEARCH_HOST:OPENSEARCH_PORT"]
+        username: OPENSEARCH_USER
+        password: OPENSEARCH_PASSWORD
+        index_type: otel-v2-apm-service-map
+        routes: [otel_apm_service_map_route]
+        insecure: true
+    # Fan out service-derived RED metrics to a dedicated pipeline that strips
+    # the per-event randomKey UUID before Cortex rejects it for cardinality.
+    - pipeline:
+        name: "service-metrics-cortex-pipeline"
+        routes: [service_processed_metrics]
+
+# Strips the per-event `randomKey` UUID from span-derived RED metrics
+# before the Cortex remote-write sink. Without this, data-prepper tags
+# every latency bucket with a fresh UUID, blowing past Cortex's default
+# 50k series-per-metric limit in minutes.
+service-metrics-cortex-pipeline:
+  delay: 100
+  source:
+    pipeline:
+      name: "service-map-pipeline"
+  processor:
+    # Drop only the per-event randomKey. Do NOT strip telemetry.sdk.language:
+    # otel_apm_service_map is configured to group_by it and emits one sample
+    # per (service, operation, remoteService, sdk.language) per window, so
+    # removing the label collapses multi-language services onto the same
+    # series+timestamp and Cortex rejects them as duplicate samples.
+    # Note: data-prepper event keys use JSON-pointer-style paths; labels
+    # set by otel_apm_service_map land under /attributes/<key>, so both
+    # the top-level and attributes-scoped paths are listed to be safe.
+    - delete_entries:
+        with_keys:
+          - "/attributes/randomKey"
+          - "randomKey"
+  sink:
+    # Route RED metrics to local Cortex via remote write.
+    # Cortex's distributor push endpoint is /api/v1/push (not Prometheus's /api/v1/write).
+    - prometheus:
+        url: "http://PROMETHEUS_HOST:PROMETHEUS_PORT/api/v1/push"
+        insecure: true
+        threshold:
+          max_events: 500
+          flush_interval: 5s

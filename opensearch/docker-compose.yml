@@ -1,0 +1,187 @@
+# Observability Stack
+# Docker Compose configuration for local development
+# WARNING: This configuration is for development/testing only - not production-ready
+name: observability-stack
+
+include:
+  - path: ${INCLUDE_COMPOSE_LOCAL_OPENSEARCH:-docker-compose/util/docker-compose.empty.yml}
+  - path: ${INCLUDE_COMPOSE_LOCAL_OPENSEARCH_DASHBOARDS:-docker-compose/util/docker-compose.empty.yml}
+
+
+
+
+x-default-logging: &logging
+  driver: "json-file"
+  options:
+    max-size: "5m"
+    max-file: "2"
+    tag: "{{.Name}}"
+
+networks:
+  observability-stack-network:
+    name: observability-stack-network
+    driver: bridge
+
+volumes:
+  prometheus-data:
+    driver: local
+
+services:
+  # OpenTelemetry Collector - Receives telemetry data via OTLP protocol
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:${OTEL_COLLECTOR_VERSION}
+    container_name: otel-collector
+    pull_policy: always
+    command: ["--config=/etc/otelcol-config.yml"]
+    volumes:
+      - ./otel-collector.yaml:/etc/otelcol-config.yml
+    ports:
+      # OTLP gRPC receiver - high-performance binary protocol
+      - "${OTEL_COLLECTOR_PORT_GRPC}:4317"
+      # OTLP HTTP receiver - easier debugging and browser compatibility
+      - "${OTEL_COLLECTOR_PORT_HTTP}:4318"
+      # Metrics endpoint for collector self-monitoring
+      - "${OTEL_COLLECTOR_METRICS_PORT}:8888"
+    networks:
+      - observability-stack-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: ${OTEL_COLLECTOR_MEMORY_LIMIT}
+    environment:
+      - OTEL_COLLECTOR_HOST=${OTEL_COLLECTOR_HOST}
+      - OTEL_COLLECTOR_PORT_GRPC=${OTEL_COLLECTOR_PORT_GRPC}
+      - OTEL_COLLECTOR_PORT_HTTP=${OTEL_COLLECTOR_PORT_HTTP}
+      - OPENSEARCH_HOST=${OPENSEARCH_HOST}
+      - OPENSEARCH_PORT=${OPENSEARCH_PORT}
+      - GOMEMLIMIT=160MiB
+    depends_on:
+      opensearch:
+        condition: service_healthy
+        required: false
+    logging: *logging
+
+  # Data Prepper - Transforms and enriches logs/traces before OpenSearch ingestion
+  data-prepper:
+    image: ${DATA_PREPPER_DOCKER_REPO}/${DATA_PREPPER_IMAGE}:${DATA_PREPPER_VERSION}
+    container_name: data-prepper
+    pull_policy: always
+    platform: linux/amd64
+    command: >
+      /bin/bash -c "
+      cp /tmp/pipelines.template.yaml /tmp/pipelines.yaml &&
+      chmod +w /tmp/pipelines.yaml &&
+      sed -i 's|OPENSEARCH_USER|${OPENSEARCH_USER}|g' /tmp/pipelines.yaml &&
+      sed -i 's|OPENSEARCH_PASSWORD|${OPENSEARCH_PASSWORD}|g' /tmp/pipelines.yaml &&
+      sed -i 's|OPENSEARCH_PROTOCOL|${OPENSEARCH_PROTOCOL}|g' /tmp/pipelines.yaml &&
+      sed -i 's|OPENSEARCH_HOST|${OPENSEARCH_HOST}|g' /tmp/pipelines.yaml &&
+      sed -i 's|OPENSEARCH_PORT|${OPENSEARCH_PORT}|g' /tmp/pipelines.yaml &&
+      sed -i 's|PROMETHEUS_HOST|${PROMETHEUS_HOST}|g' /tmp/pipelines.yaml &&
+      sed -i 's|PROMETHEUS_PORT|${PROMETHEUS_PORT}|g' /tmp/pipelines.yaml &&
+      mv /tmp/pipelines.yaml /usr/share/data-prepper/pipelines/pipelines.yaml &&
+      exec /usr/share/data-prepper/bin/data-prepper"
+    volumes:
+      - ./pipelines.template.yaml:/tmp/pipelines.template.yaml
+      - ./data-prepper-config.yaml:/usr/share/data-prepper/config/data-prepper-config.yaml
+    ports:
+      # OTLP gRPC receiver from OpenTelemetry Collector
+      - "${DATA_PREPPER_OTLP_PORT}:21890"
+      # OTLP HTTP receiver
+      - "${DATA_PREPPER_HTTP_PORT}:21892"
+    environment:
+      - OPENSEARCH_HOST=${OPENSEARCH_HOST}
+      - OPENSEARCH_PORT=${OPENSEARCH_PORT}
+      - OPENSEARCH_USER=${OPENSEARCH_USER}
+      - OPENSEARCH_PASSWORD=${OPENSEARCH_PASSWORD}
+      - PROMETHEUS_HOST=${PROMETHEUS_HOST}
+      - PROMETHEUS_PORT=${PROMETHEUS_PORT}
+    depends_on:
+      opensearch:
+        condition: service_healthy
+        required: false
+    networks:
+      - observability-stack-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: ${DATA_PREPPER_MEMORY_LIMIT}
+    logging: *logging
+
+  # Cortex - Prometheus-compatible metrics backend with Ruler + Alertmanager APIs
+  # Replaces vanilla Prometheus to expose the full Prometheus HTTP API surface
+  # (query, ruler, alertmanager) at a single endpoint for OpenSearch Dashboards.
+  # The service name is kept as "prometheus" so PROMETHEUS_HOST/PORT in .env
+  # continue to work everywhere without changes.
+  prometheus:
+    image: cortexproject/cortex:${CORTEX_VERSION}
+    container_name: prometheus
+    # One-time cleanup shim: if this is the first boot of Cortex on a volume
+    # that still has vanilla-Prometheus artifacts (/data/chunks_head with no
+    # /data/tsdb), remove them before starting Cortex so the volume isn't
+    # polluted with dormant dirs Cortex never reads. Skips on fresh deploys
+    # (chunks_head absent) and on subsequent restarts (tsdb present).
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        if [ ! -d /data/tsdb ] && [ -d /data/chunks_head ]; then
+          echo "First boot after upgrade from vanilla Prometheus — removing stale TSDB artifacts"
+          rm -rf /data/chunks_head /data/wal /data/wbl /data/lock /data/queries.active
+        fi
+        exec /bin/cortex "$$@"
+      - --
+    command:
+      - '-config.file=/etc/cortex/cortex.yaml'
+      # Cortex retention mirrors PROMETHEUS_RETENTION. Compactor deletes
+      # blocks whose max-time is older than this; set to 0 to disable.
+      - '-compactor.blocks-retention-period=${PROMETHEUS_RETENTION}'
+    volumes:
+      - ./cortex.yaml:/etc/cortex/cortex.yaml:ro
+      - prometheus-data:/data
+    ports:
+      - "${PROMETHEUS_PORT}:9090"
+    networks:
+      - observability-stack-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: ${PROMETHEUS_MEMORY_LIMIT}
+    healthcheck:
+      test: ["CMD", "wget", "--tries=1", "--spider", "-q", "http://localhost:9090/ready"]
+      start_period: 30s
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    logging: *logging
+
+  # OpenSearch Prometheus Exporter - Exposes OpenSearch metrics for Prometheus scraping
+  opensearch-exporter:
+    image: prometheuscommunity/elasticsearch-exporter:v1.10.0
+    container_name: opensearch-exporter
+    command:
+      - --es.uri=${OPENSEARCH_PROTOCOL}://${OPENSEARCH_HOST}:${OPENSEARCH_PORT}
+      - --es.ssl-skip-verify
+      - --es.all
+      - --es.indices
+      - --es.shards
+    environment:
+      - ES_USERNAME=${OPENSEARCH_USER}
+      - ES_PASSWORD=${OPENSEARCH_PASSWORD}
+    ports:
+      - "9114:9114"
+    networks:
+      - observability-stack-network
+    depends_on:
+      opensearch:
+        condition: service_healthy
+        required: false
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    logging: *logging
+
