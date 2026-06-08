@@ -1,0 +1,10 @@
+FROM python:3.12.9
+
+COPY . /app
+WORKDIR /app
+RUN apt update && apt install -y --no-install-recommends \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+RUN pip install git+https://github.com/arnavdas88/nats-observatory
+
+CMD ["python", "-m", "nats_observe"]

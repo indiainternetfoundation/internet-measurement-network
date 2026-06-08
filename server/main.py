@@ -10,6 +10,7 @@ from nats_observe.config import NATSotelSettings
 from nats_observe.client import Client as NATSotel
 
 from nats.aio.msg import Msg
+from opentelemetry.trace import SpanKind
 
 from models import AgentHeartbeat, AgentInfo
 
@@ -17,7 +18,7 @@ from openapi_schema_validator import validate
 from jsonschema.exceptions import ValidationError
 
 # ======== CONFIG ============
-NATS_URL = ["nats://192.168.19.169:4222"]
+NATS_URL = ["nats://192.168.19.157:4222"]
 HEARTBEAT_SUBJECT = "agent.heartbeat_module"
 HEARTBEAT_INTERVAL = 5                      # Agents send heartbeat every 5s
 HEARTBEAT_TIMEOUT = HEARTBEAT_INTERVAL * 2  # If no heartbeat in 10s => dead
@@ -26,10 +27,7 @@ HEARTBEAT_TIMEOUT = HEARTBEAT_INTERVAL * 2  # If no heartbeat in 10s => dead
 # 🧠 In-memory cache
 agent_cache: Dict[str, AgentInfo] = {}
 settings = NATSotelSettings(service_name="server", servers=NATS_URL)
-nc: NATSotel = NATSotel(settings)
-
-app = FastAPI(title="Agent Server", version="1.0")
-
+nc: NATSotel = NATSotel(settings, kind=SpanKind.SERVER)
 
 # 📡 NATS connection & subscription
 async def nats_connect():
@@ -66,7 +64,6 @@ async def nats_connect():
 
     await nc.subscribe(HEARTBEAT_SUBJECT, cb=heartbeat_handler)
 
-
 # 🧹 Background cleanup task (mark dead)
 async def cleanup_agents():
     while True:
@@ -79,11 +76,14 @@ async def cleanup_agents():
         await asyncio.sleep(HEARTBEAT_INTERVAL)
 
 
-# 🔌 Startup
-@app.on_event("startup")
-async def startup_event():
+async def lifespan(app: FastAPI):
+    # Startup code can be placed here if needed
     asyncio.create_task(nats_connect())
     asyncio.create_task(cleanup_agents())
+    yield
+    # Shutdown code can be placed here if needed 
+
+app = FastAPI(title="Agent Server", version="1.0", lifespan=lifespan)
 
 
 # ======================

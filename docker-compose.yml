@@ -1,7 +1,7 @@
 services:
   nats:
     image: nats:latest
-    command: "-n newton -DV -m 8222 -p 4222"
+    command: "-n newton -m 8222 -p 4222"
     hostname: nats-server
     ports:
       - "8222:8222"  # Monitoring port
@@ -21,14 +21,30 @@ services:
     networks:
       - aiori-net
 
-  nui:
-    image: ghcr.io/nats-nui/nui:edge
-    volumes:
-     - ./db:/db
-    ports:
-     - "31312:31311" 
+  # nui:
+  #   image: ghcr.io/nats-nui/nui:edge
+  #   volumes:
+  #    - ./db:/db
+  #   ports:
+  #    - "31312:31311" 
+  #   depends_on:
+  #      - nats
+  #   networks:
+  #     - aiori-net
+
+  nats-observatory:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.observatory
+    container_name: nats-observatory
+    environment:
+      - OTLP_TRACE_ENDPOINT=http://host.docker.internal:4317
+      - OTLP_LOGS_ENDPOINT=http://host.docker.internal:4317
+      - SERVERS=["nats://nats-server:4222"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
-       - nats
+      - nats
     networks:
       - aiori-net
 
@@ -39,16 +55,21 @@ services:
     container_name: agent_1
     volumes:
       - ./:/app
+    working_dir: /app  # Ensure correct working directory
     environment:
+      - OTLP_TRACE_ENDPOINT=http://host.docker.internal:4317
+      - OTLP_LOGS_ENDPOINT=http://host.docker.internal:4317
       - NATS_URL=["nats://nats-server:4222"]
+      - SERVERS=["nats://nats-server:4222"]
       - AGENT_NAME=aiori_1
     ports:
       - "9101:9101"  # Agent metrics/API
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       - nats
     networks:
       - aiori-net
-    working_dir: /app  # Ensure correct working directory
 
   agent_2:
     build:
@@ -59,10 +80,15 @@ services:
       - ./:/app
     working_dir: /app
     environment:
+      - OTLP_TRACE_ENDPOINT=http://host.docker.internal:4317
+      - OTLP_LOGS_ENDPOINT=http://host.docker.internal:4317
       - NATS_URL=["nats://nats-server:4222"]
+      - SERVERS=["nats://nats-server:4222"]
       - AGENT_NAME=aiori_2
     ports:
       - "9102:9102"  # Changed port to avoid conflict
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       - nats
     networks:
@@ -70,4 +96,5 @@ services:
 
 networks:
   aiori-net:
+    name: aiori-net
     driver: bridge

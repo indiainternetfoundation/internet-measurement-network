@@ -1,9 +1,11 @@
 import asyncio
+from os import name
 
 
 from nats_observe.config import NATSotelSettings
 from nats_observe.client import Client as NATSotel
 from nats.aio.client import Client as NATS
+from opentelemetry.trace import SpanKind
 
 from .base import logger
 from .config import settings
@@ -21,12 +23,14 @@ class NatsClient:
         url: str = settings.nats_url,
     ):
         self.name: str = name
-        self.url: list[str] = url.split(";")
+        self.url: list[str] = url
         settings = NATSotelSettings(service_name="agent", servers=self.url)
         # logger = logging.getLogger('server')
-        self.nc: NATSotel = NATSotel(settings)
+        self.nc: NATSotel = NATSotel(settings, kind=SpanKind.CLIENT)
 
     async def __aenter__(self):
+        print(f"Connecting to NATS at {self.url} with name {self.name}")
+
         await self.nc.connect(
             servers=self.url,
             error_cb=self.error_cb,
