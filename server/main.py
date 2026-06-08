@@ -24,12 +24,12 @@ HEARTBEAT_INTERVAL = 5                      # Agents send heartbeat every 5s
 HEARTBEAT_TIMEOUT = HEARTBEAT_INTERVAL * 2  # If no heartbeat in 10s => dead
 # ============================
 
-# 🧠 In-memory cache
+# In-memory cache
 agent_cache: Dict[str, AgentInfo] = {}
 settings = NATSotelSettings(service_name="server", servers=NATS_URL)
 nc: NATSotel = NATSotel(settings, kind=SpanKind.SERVER)
 
-# 📡 NATS connection & subscription
+# NATS connection & subscription
 async def nats_connect():
     await nc.connect(settings.servers, name="server", verbose=True, reconnect_time_wait=0)
     print(f"[Cache] Connected to NATS: {NATS_URL}")
@@ -64,7 +64,7 @@ async def nats_connect():
 
     await nc.subscribe(HEARTBEAT_SUBJECT, cb=heartbeat_handler)
 
-# 🧹 Background cleanup task (mark dead)
+# Background cleanup task (mark dead)
 async def cleanup_agents():
     while True:
         now = datetime.now(timezone.utc)
@@ -166,7 +166,18 @@ async def run_module(
 
         return {
             "message": "success",
-            "id": module_request.get("id")
+            "id": module_request.get("id", None)
         }
     except Exception as ex:
         return {"error": "..."}
+
+@app.get("/measurements/status/{measurement_id}")
+async def get_measurement_status(measurement_id: uuid.UUID):
+    """
+    Get the status of a specific measurement by its ID.
+    """
+    # This is a placeholder implementation. In a real implementation, you would query your database or in-memory store for the measurement status.
+    return {
+        "measurement_id": measurement_id,
+        "status": "pending"  # or "running", "completed", "failed"
+    }
