@@ -23,7 +23,7 @@ class WorkingModule(BaseWorker):
         """
         Subscribes to the input subject and echoes data to output.
         """
-        await self.nc.subscribe(self.sub_in, cb=self.handle)
+        await self.nc.subscribe(self.sub_in, cb=await self.handler_decorator(self.handle))
         self.logger.info(f"{self.name}: Listening on {self.sub_in}")
 
     async def handle(self, msg: Msg):

@@ -1,8 +1,11 @@
+import json
 import sys
 import time
 import asyncio
 import logging
 from typing import Annotated, Optional, Type
+
+from nats.aio.msg import Msg
 
 # Configure logging
 logging.basicConfig(
@@ -45,6 +48,24 @@ class BaseWorker:
         except Exception as ex:
             self.running = False
             await crash_handler(self.name, ex)
+
+    async def handler_decorator(self, cb):
+        def wrapper(msg):
+            async def wrapped_and_subbed_callback():
+                data = json.loads(msg.data.decode())
+                msg_id = data.get("id")  # Ensure 'id' is present for logging
+                try:
+                    await self.nc.publish(self.sub_out, json.dumps({"status": "started", "id": msg_id}).encode())
+                    self.logger.debug(f"Received message with id: {msg_id}")
+                    result = await cb(msg)
+                    await self.nc.publish(self.sub_out, json.dumps({"status": "finished", "id": msg_id}).encode())
+                    return result
+                except Exception as ex:
+                    self.logger.exception("Error in handler_decorator")
+                    await self.nc.publish(self.sub_err, json.dumps({"error": str(ex), "id": msg_id}).encode())
+                    raise ex
+            return wrapped_and_subbed_callback()
+        return wrapper
 
     def start(self, crash_handler):
         self.task = asyncio.create_task(self.__run__(crash_handler=crash_handler))

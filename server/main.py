@@ -139,7 +139,8 @@ async def run_module(
         agent_id: str, 
         module_name: str, 
         module_request: Dict[str, Any], 
-        untracked: bool = Query(False) # Query parameter with default and alias
+        # Query parameter with default and alias 
+        untracked: bool = Query(False) 
     ):
     try:
         agent = agent_cache.get(agent_id)

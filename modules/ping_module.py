@@ -49,6 +49,9 @@ class PingModule(BaseWorker):
         if not check_package_availability("icmplib"):
             install_package("icmplib")
 
+        if not check_package_availability("six"):
+            install_package("six")
+
         await asyncio.sleep(5)
         return check_package_availability("icmplib")
 
@@ -57,7 +60,7 @@ class PingModule(BaseWorker):
         Subscribes to the input subject and starts handling ping requests.
         """
         try:
-            self.subscription = await self.nc.subscribe(self.sub_in, cb=self.handle)
+            self.subscription = await self.nc.subscribe(self.sub_in, cb=await self.handler_decorator(self.handle))
             self.logger.info(f"{self.name}: Listening on {self.sub_in}")
         except Exception as e:
             self.logger.error(f"{self.name}: Failed to subscribe to {self.sub_in}: {e}")
@@ -77,9 +80,8 @@ class PingModule(BaseWorker):
             model_type = PingQuery.model_type()
 
             # Execute ping
-            from icmplib import Host
             try:
-                from icmplib import async_ping
+                from icmplib import Host, async_ping
                 ping_result = await async_ping(
                     address=str(query.host), 
                     count=query.count, 
