@@ -11,14 +11,14 @@ from aiori_agent.base import BaseWorker
 from nats.aio.client import Client as NATS
 from nats.aio.msg import Msg
 
-from aiori_agent.model import Hostname, Domain, MeasurementQuery
+from aiori_agent.model import IPv4, IPv6, Hostname, Domain, MeasurementQuery
 from aiori_agent.utils import check_package_availability, install_package
 
 from pydantic import BaseModel, Field
 
 
 class PingQuery(MeasurementQuery):
-    host: IPv4Address | IPv6Address | Hostname | Domain = Field(title="Host", description="This field requires either the IP Address, Hostname or the FQDN of the host system to ping", examples=["8.8.8.8", "1.1.1.1"])
+    host: IPv4 | IPv6 | Hostname | Domain = Field(title="Host", description="This field requires either the IP Address, Hostname or the FQDN of the host system to ping", examples=["8.8.8.8", "1.1.1.1"])
     count: int = Field(default=3, title="Count", description="How many times will the host be pinged for measurement")
     port: int = Field(default=80, title="Port", description="Which port to ping to")
 
