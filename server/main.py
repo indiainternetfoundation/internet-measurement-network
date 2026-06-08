@@ -19,12 +19,14 @@ from jsonschema.exceptions import ValidationError
 
 # ======== CONFIG ============
 NATS_URL = ["nats://192.168.19.157:4222"]
+OUTPUT_SUBJECT = "agent.*.out"
 HEARTBEAT_SUBJECT = "agent.heartbeat_module"
 HEARTBEAT_INTERVAL = 5                      # Agents send heartbeat every 5s
 HEARTBEAT_TIMEOUT = HEARTBEAT_INTERVAL * 2  # If no heartbeat in 10s => dead
 # ============================
 
 # In-memory cache
+measurement_cache: Dict[str, Any] = {} # TODO: Replace with DBOS
 agent_cache: Dict[str, AgentInfo] = {}
 settings = NATSotelSettings(service_name="server", servers=NATS_URL)
 nc: NATSotel = NATSotel(settings, kind=SpanKind.SERVER)
@@ -75,11 +77,23 @@ async def cleanup_agents():
                     print(f"[Cache] Agent {agent_id} marked DEAD (last seen {info.last_seen})")
         await asyncio.sleep(HEARTBEAT_INTERVAL)
 
+async def runs_monitor():
+    async def monitor_handler(msg: Msg):
+        try:
+            data = json.loads(msg.data.decode())
+            measurement_id = data.get("id")
+            if measurement_id:
+                measurement_cache[str(measurement_id)] = data.get("status", "running")
+            print(f"[Run Monitor] Current measurement cache: {measurement_cache}")
+        except Exception as e:
+            print("[Run Monitor] Error parsing run update:", e)
+    await nc.subscribe(OUTPUT_SUBJECT, cb=monitor_handler)
 
 async def lifespan(app: FastAPI):
     # Startup code can be placed here if needed
     asyncio.create_task(nats_connect())
     asyncio.create_task(cleanup_agents())
+    asyncio.create_task(runs_monitor())
     yield
     # Shutdown code can be placed here if needed 
 
@@ -165,6 +179,9 @@ async def run_module(
 
             await nc.publish(all_spec[module_name]['input_subject'], json.dumps(module_request).encode())
 
+        if module_request.get("id", None):
+            measurement_cache[module_request["id"]] = None
+
         return {
             "message": "success",
             "id": module_request.get("id", None)
@@ -172,13 +189,12 @@ async def run_module(
     except Exception as ex:
         return {"error": "..."}
 
-@app.get("/measurements/status/{measurement_id}")
-async def get_measurement_status(measurement_id: uuid.UUID):
+@app.get("/runs/status/{measurement_id}")
+async def get_run_status(measurement_id: uuid.UUID):
     """
-    Get the status of a specific measurement by its ID.
+    Get the status of a specific run by its ID.
     """
-    # This is a placeholder implementation. In a real implementation, you would query your database or in-memory store for the measurement status.
     return {
         "measurement_id": measurement_id,
-        "status": "pending"  # or "running", "completed", "failed"
+        "status": measurement_cache.get(str(measurement_id), None) # "pending", "running", "completed", "failed"
     }
