@@ -1,5 +1,6 @@
-import asyncio
+import os
 import json
+import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any, Dict
 import uuid
@@ -12,10 +13,10 @@ from nats_observe.client import Client as NATSotel
 from nats.aio.msg import Msg
 from opentelemetry.trace import SpanKind
 
-from models import AgentHeartbeat, AgentInfo
-
 from openapi_schema_validator import validate
 from jsonschema.exceptions import ValidationError
+
+from models import AgentHeartbeat, AgentInfo
 
 # ======== CONFIG ============
 NATS_URL = ["nats://192.168.19.157:4222"]
@@ -77,24 +78,13 @@ async def cleanup_agents():
                     print(f"[Cache] Agent {agent_id} marked DEAD (last seen {info.last_seen})")
         await asyncio.sleep(HEARTBEAT_INTERVAL)
 
-async def runs_monitor():
-    async def monitor_handler(msg: Msg):
-        try:
-            data = json.loads(msg.data.decode())
-            measurement_id = data.get("id")
-            if measurement_id:
-                measurement_cache[str(measurement_id)] = data.get("status", "running")
-            print(f"[Run Monitor] Current measurement cache: {measurement_cache}")
-        except Exception as e:
-            print("[Run Monitor] Error parsing run update:", e)
-    await nc.subscribe(OUTPUT_SUBJECT, cb=monitor_handler)
-
 async def lifespan(app: FastAPI):
     # Startup code can be placed here if needed
     asyncio.create_task(nats_connect())
     asyncio.create_task(cleanup_agents())
-    asyncio.create_task(runs_monitor())
+
     yield
+
     # Shutdown code can be placed here if needed 
 
 app = FastAPI(title="Agent Server", version="1.0", lifespan=lifespan)
@@ -189,12 +179,3 @@ async def run_module(
     except Exception as ex:
         return {"error": "..."}
 
-@app.get("/runs/status/{measurement_id}")
-async def get_run_status(measurement_id: uuid.UUID):
-    """
-    Get the status of a specific run by its ID.
-    """
-    return {
-        "measurement_id": measurement_id,
-        "status": measurement_cache.get(str(measurement_id), None) # "pending", "running", "completed", "failed"
-    }

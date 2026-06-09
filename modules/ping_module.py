@@ -4,6 +4,7 @@ import logging
 import asyncio
 from typing import Any, Optional, Type
 from ipaddress import IPv4Address, IPv6Address
+import uuid
 
 from aiori_agent.agent import Agent
 from aiori_agent.base import BaseWorker
@@ -77,7 +78,17 @@ class PingModule(BaseWorker):
             data = json.loads(msg.data.decode())
 
             query = PingQuery(**data)
-            model_type = PingQuery.model_type()
+            # model_type = PingQuery.model_type()
+
+            response_info = {
+                "query.id": str(query.id),
+                "query.name": str(self.name),
+                "query.agent": str(self.agent.agent_id),
+                "id": str(uuid.uuid4()),
+            }
+
+            self.logger.info(f"{self.name}: Starting initial ping:")
+            await self.nc.publish(self.sub_out, json.dumps(response_info).encode("utf-8"))
 
             # Execute ping
             try:
@@ -100,7 +111,7 @@ class PingModule(BaseWorker):
                 ping_result = await async_ping.ping()
 
             result = {
-                "id": str(query.id),
+                **response_info,
                 "address": ping_result.address,
                 "rtts": ping_result.rtts,
                 "packets_received": ping_result.packets_received,

@@ -21,16 +21,20 @@ services:
     networks:
       - aiori-net
 
-  # nui:
-  #   image: ghcr.io/nats-nui/nui:edge
-  #   volumes:
-  #    - ./db:/db
-  #   ports:
-  #    - "31312:31311" 
-  #   depends_on:
-  #      - nats
-  #   networks:
-  #     - aiori-net
+  postgres:
+    image: postgres:latest
+    container_name: postgres_db
+    restart: always
+    environment:
+      POSTGRES_USER: dbosuser
+      POSTGRES_PASSWORD: dbospassword
+      POSTGRES_DB: dbos
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    networks:
+      - aiori-net
 
   nats-observatory:
     build:
@@ -95,6 +99,9 @@ services:
       - nats
     networks:
       - aiori-net
+
+volumes:
+  postgres_data:
 
 networks:
   aiori-net:

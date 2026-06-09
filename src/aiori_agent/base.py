@@ -54,15 +54,20 @@ class BaseWorker:
             async def wrapped_and_subbed_callback():
                 data = json.loads(msg.data.decode())
                 msg_id = data.get("id")  # Ensure 'id' is present for logging
+                info = {
+                    "query.id": msg_id,
+                    "query.name": str(self.name),
+                    "query.agent": str(self.agent.agent_id),
+                }
                 try:
-                    await self.nc.publish(self.sub_out, json.dumps({"status": "started", "id": msg_id}).encode())
+                    await self.nc.publish(self.sub_out, json.dumps({"status": "started", **info}).encode())
                     self.logger.debug(f"Received message with id: {msg_id}")
                     result = await cb(msg)
-                    await self.nc.publish(self.sub_out, json.dumps({"status": "finished", "id": msg_id}).encode())
+                    await self.nc.publish(self.sub_out, json.dumps({"status": "completed", **info}).encode())
                     return result
                 except Exception as ex:
                     self.logger.exception("Error in handler_decorator")
-                    await self.nc.publish(self.sub_err, json.dumps({"error": str(ex), "id": msg_id}).encode())
+                    await self.nc.publish(self.sub_err, json.dumps({"status": "error", "error": str(ex), **info}).encode())
                     raise ex
             return wrapped_and_subbed_callback()
         return wrapper

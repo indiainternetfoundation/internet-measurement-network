@@ -2,6 +2,7 @@ import json
 import time
 import random
 import asyncio
+import uuid
 from aiori_agent.base import BaseWorker
 from nats.aio.msg import Msg
 
@@ -52,6 +53,10 @@ class FaultyModule(BaseWorker):
 
             # Echo back
             response = {
+                "query.id": str(payload.get("id")),
+                "query.name": str(self.__class__.__name__),
+                "query.agent": str(self.agent.agent_id),
+                "id": str(uuid.uuid4()),
                 "from_module": self.name,
                 "processed_at": time.time(),
                 "input": payload,
