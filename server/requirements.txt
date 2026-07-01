@@ -1,10 +1,13 @@
 rich
 wheel
 typer
+psycopg2-binary
+sqlmodel
 fastapi[standard]
 nats-py[nkeys]
 watchdog
 pydantic
+opensearch-py
 pydantic-settings
 openapi-schema-validator
 git+https://github.com/arnavdas88/nats-observatory

@@ -20,11 +20,11 @@ class NatsClient:
     def __init__(
         self,
         name: str,
-        url: str = settings.nats_url,
+        url: str = settings.SERVERS,
     ):
         self.name: str = name
         self.url: list[str] = url
-        settings = NATSotelSettings(service_name="agent", servers=self.url)
+        settings = NATSotelSettings(service_name=f"{self.name}", servers=self.url, )
         # logger = logging.getLogger('server')
         self.nc: NATSotel = NATSotel(settings, kind=SpanKind.CLIENT)
 

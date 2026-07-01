@@ -26,9 +26,9 @@ services:
     container_name: postgres_db
     restart: always
     environment:
-      POSTGRES_USER: dbosuser
-      POSTGRES_PASSWORD: dbospassword
-      POSTGRES_DB: dbos
+      POSTGRES_USER: pguser
+      POSTGRES_PASSWORD: pgpassword
+      POSTGRES_DB: pg
     ports:
       - "5432:5432"
     volumes:
@@ -52,6 +52,28 @@ services:
     networks:
       - aiori-net
 
+  server_1:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.server
+    container_name: server_1
+    hostname: server_1
+    volumes:
+      - ./:/app
+    working_dir: /app  # Ensure correct working directory
+    environment:
+      - OTLP_TRACE_ENDPOINT=http://host.docker.internal:4317
+      - OTLP_LOGS_ENDPOINT=http://host.docker.internal:4317
+      - SERVERS=["nats://nats-server:4222"]
+    ports:
+      - "8000:8000"  # Server API
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - nats
+    networks:
+      - aiori-net
+
   agent_1:
     build:
       context: .
@@ -64,7 +86,7 @@ services:
     environment:
       - OTLP_TRACE_ENDPOINT=http://host.docker.internal:4317
       - OTLP_LOGS_ENDPOINT=http://host.docker.internal:4317
-      - NATS_URL=["nats://nats-server:4222"]
+      - SERVERS=["nats://nats-server:4222"]
       - SERVERS=["nats://nats-server:4222"]
       - AGENT_NAME=aiori_1
     ports:
@@ -88,7 +110,7 @@ services:
     environment:
       - OTLP_TRACE_ENDPOINT=http://host.docker.internal:4317
       - OTLP_LOGS_ENDPOINT=http://host.docker.internal:4317
-      - NATS_URL=["nats://nats-server:4222"]
+      - SERVERS=["nats://nats-server:4222"]
       - SERVERS=["nats://nats-server:4222"]
       - AGENT_NAME=aiori_2
     ports:

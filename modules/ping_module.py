@@ -88,7 +88,7 @@ class PingModule(BaseWorker):
             }
 
             self.logger.info(f"{self.name}: Starting initial ping:")
-            await self.nc.publish(self.sub_out, json.dumps(response_info).encode("utf-8"))
+            # await self.nc.publish(self.sub_out, json.dumps(response_info).encode("utf-8"))
 
             # Execute ping
             try:

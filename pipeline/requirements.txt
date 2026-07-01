@@ -5,3 +5,4 @@ nats-py[nkeys]
 pydantic
 pydantic-settings
 sqlmodel
+opensearch-py
