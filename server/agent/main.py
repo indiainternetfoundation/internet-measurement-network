@@ -1,29 +1,22 @@
 import os
-import json
 import asyncio
+import uuid, json
+from typing import Any, Dict
 from datetime import datetime, timedelta, timezone
-from typing import Annotated, Any, Dict
-import uuid
-
-from fastapi import FastAPI, APIRouter, Query, HTTPException
-
-from nats_observe.config import NATSotelSettings
-from nats_observe.client import Client as NATSotel
 
 from nats.aio.msg import Msg
-from opentelemetry.trace import SpanKind
+from fastapi import APIRouter, Query, HTTPException
 
 from openapi_schema_validator import validate
 from jsonschema.exceptions import ValidationError
 
+from ..core.connections import nc
 from .models.agent import AgentHeartbeat, AgentInfo
 
-# ======== CONFIG ============
 OUTPUT_SUBJECT = "agent.*.out"
 HEARTBEAT_SUBJECT = "agent.heartbeat_module"
 HEARTBEAT_INTERVAL = 5                      # Agents send heartbeat every 5s
 HEARTBEAT_TIMEOUT = HEARTBEAT_INTERVAL * 2  # If no heartbeat in 10s => dead
-# ============================
 
 # In-memory cache
 measurement_cache: Dict[str, Any] = {}
@@ -31,9 +24,6 @@ agent_cache: Dict[str, AgentInfo] = {}
 
 # NATS connection & subscription
 async def nats_connect(nc):
-    # await nc.connect(settings.servers, name="server", verbose=True, reconnect_time_wait=0)
-    # print(f"[Cache] Connected to NATS: {SERVERS}")
-
     async def heartbeat_handler(msg: Msg):
         try:
             data = json.loads(msg.data.decode())
@@ -57,8 +47,6 @@ async def nats_connect(nc):
                     first_seen=now,
                     total_heartbeats=1
                 )
-            print(f"[Cache] Updated heartbeat: {hb.agent_id} @ {hb.timestamp}")
-
         except Exception as e:
             print("[Cache] Error parsing heartbeat:", e)
 
@@ -75,15 +63,8 @@ async def cleanup_agents():
                     print(f"[Cache] Agent {agent_id} marked DEAD (last seen {info.last_seen})")
         await asyncio.sleep(HEARTBEAT_INTERVAL)
 
-
 # Create a router instead of a FastAPI instance
 router = APIRouter(prefix="/agents", tags=["agents"])
-
-
-
-# ======================
-#       API ROUTES
-# ======================
 
 @router.get("/", response_model=Dict[str, AgentInfo])
 async def get_all_agents():
@@ -159,5 +140,5 @@ async def run_module(
             "id": module_request.get("id", None)
         }
     except Exception as ex:
-        return {"error": "..."}
+        return {"error": "...", "message": str(ex)}
 

@@ -1,8 +1,0 @@
-wheel
-typer
-fastapi[standard]
-nats-py[nkeys]
-pydantic
-pydantic-settings
-sqlmodel
-opensearch-py

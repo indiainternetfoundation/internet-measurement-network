@@ -1,24 +1,16 @@
-import asyncio
-import enum
-import json
-import uuid
-from typing import Any, Dict
+import json, uuid
 from datetime import datetime
 
-from nats import NATS
 from nats.aio.msg import Msg
 
-from fastapi import FastAPI, APIRouter, Query, HTTPException
-from opentelemetry.trace import SpanKind
-from sqlmodel import Field, Session, SQLModel, create_engine, select
-
-from nats_observe.config import NATSotelSettings
-from nats_observe.client import Client as NATSotel
+from fastapi import APIRouter
+from sqlmodel import Session, select
 
 from opensearchpy import OpenSearch
 
-from server.pipeline.models.measurement import MeasurementState, Status
 from server.pipeline.models.pipeline import OpensearchDataPipeline
+from server.pipeline.models.measurement import MeasurementState, Status
+from ..core.connections import engine
 
 OUTPUT_SUBJECT = "agent.*.out"
 
@@ -51,8 +43,6 @@ __PIPELINE = [
 
 async def runs_monitor(nc):
     async def monitor_handler(msg: Msg):
-        # print(f"[Run Monitor] Running : {msg.data.decode()}")
-
         try:
             data = json.loads(msg.data.decode())
             measurement_query_id = data.get("query.id")
@@ -71,19 +61,16 @@ async def runs_monitor(nc):
                     # Measurement Data
                     if "status" not in data:
                         try:
-                            # print(f"[{msg.subject}]", data)
                             for pipeline in __PIPELINE:
                                 ospd : OpensearchDataPipeline = pipeline["ospd"]
                                 client : OpenSearch = pipeline["client"]
 
-                                client.create
                                 response = client.index(
                                     index = "-".join([osdp.index, datetime.now().strftime("%Y.%m.%d")]),
                                     body = data,
                                     id = measurement_query_id,
                                     refresh = True
                                 )
-                                print(response)
 
                         except Exception as ex:
                             print("Error", ex)
@@ -111,10 +98,6 @@ async def check_opensearch_connections():
 
 # Create a router instead of a FastAPI instance
 router = APIRouter(prefix="/pipeline", tags=["pipeline"])
-
-@router.get("/")
-async def root():
-    return {"status": "ok", "message": "Welcome to the Pipeline Server!"}
 
 @router.get("/runs/status/{measurement_id}")
 async def get_run_status(measurement_id: uuid.UUID):
